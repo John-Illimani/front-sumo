@@ -26,16 +26,11 @@ import {
 import { blockchainBoletaService } from "../../services/admin/blockchainBoletaService";
 import { blockchainService } from "../../services/admin/blockchainService";
 
+import { GlobalWorkerOptions } from "pdfjs-dist";
+import pdfWorker from "pdfjs-dist/build/pdf.worker.min?url";
+
 if (typeof window !== "undefined") {
-  try {
-    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
-      "pdfjs-dist/build/pdf.worker.mjs",
-      import.meta.url
-    ).toString();
-  } catch (e) {
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
-  }
+  GlobalWorkerOptions.workerSrc = pdfWorker;
 }
 
 // --- SERVICIOS AÑADIDOS SEGÚN REQUERIMIENTO ---
