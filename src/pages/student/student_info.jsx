@@ -74,7 +74,7 @@ const BlockchainEmisionModal = ({ isOpen, onClose, modalData, onConfirmPrint }) 
         iconBg: "bg-gradient-to-br from-emerald-400 to-emerald-600",
         glowColor: "bg-emerald-500/20",
         btnBg: "bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 shadow-emerald-700/25",
-        title: "Emisión Exitosa en Blockchain",
+        title: "Emisión Exitosa en Smart Contract",
         subtitle: "Registro inmutable verificado",
       };
 
@@ -321,14 +321,13 @@ export const DashboardInicioEstudiante = ({ onNavigate = () => {} }) => {
         cursosService.getAll().catch(() => []),
         inscripcionesService.getAll().catch(() => []),
         pagosService.getAll().catch(() => []),
-        fetch(import.meta.env.VITE_API_URL + "/api/usuarios", { headers: authHeaders })
+        fetch("http://127.0.0.1:8000/api/usuarios", { headers: authHeaders })
           .then((res) => (res.ok ? res.json() : []))
           .catch(() => []),
-        fetch(import.meta.env.VITE_API_URL + "/api/postulantes", { headers: authHeaders })
+        fetch("http://127.0.0.1:8000/api/postulantes", { headers: authHeaders })
           .then((res) => (res.ok ? res.json() : []))
           .catch(() => [])
       ]);
-      
 
       let currentStudent = parsedUser;
       if (parsedUser && Array.isArray(usuariosRes)) {

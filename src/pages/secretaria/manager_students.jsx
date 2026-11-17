@@ -33,7 +33,9 @@ import {
   Printer,
   Eye,
   AlertTriangle,
-  Ban
+  Ban,
+  Camera,
+  Upload
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import jsPDF from "jspdf";
@@ -46,6 +48,53 @@ import { facultadesService } from "../../services/admin/facultadesService";
 import { catalogoService } from "../../services/admin/catalogoService";
 import { blockchainBoletaService } from "../../services/admin/blockchainBoletaService";
 import { FeedbackModal } from "../../components/common/FeedbackModal";
+
+const API_URL = "http://127.0.0.1:8000/api";
+
+// Reduce la foto a 400 px máximo y la comprime a JPEG antes de enviarla
+const comprimirImagen = (file, maxLado = 400, calidad = 0.8) =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("No se pudo leer el archivo."));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error("El archivo no es una imagen válida."));
+      img.onload = () => {
+        const escala = Math.min(1, maxLado / Math.max(img.width, img.height));
+        const w = Math.max(1, Math.round(img.width * escala));
+        const h = Math.max(1, Math.round(img.height * escala));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", calidad));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+// Guarda o elimina la foto en la tabla usuarios (columna foto)
+const guardarFotoUsuario = async (usuarioId, { foto, eliminar }) => {
+  const token = localStorage.getItem("access_token") || localStorage.getItem("token");
+  const res = await fetch(`${API_URL}/usuarios/${usuarioId}`, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify(eliminar ? { eliminar_foto: true } : { foto }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(data.message || "No se pudo guardar la foto del estudiante.");
+  }
+  return data;
+};
 
 export const ConfirmDeleteModal = ({ isOpen, onClose, onConfirm, studentName }) => {
   if (!isOpen) return null;
@@ -96,6 +145,170 @@ export const ConfirmDeleteModal = ({ isOpen, onClose, onConfirm, studentName }) 
   );
 };
 
+export const HistorialRfidModal = ({ isOpen, onClose, estudiante }) => {
+  const [registrosRfid, setRegistrosRfid] = useState([]);
+  const [loadingRfid, setLoadingRfid] = useState(false);
+
+  useEffect(() => {
+    if (isOpen && estudiante) {
+      const fetchRfid = async () => {
+        setLoadingRfid(true);
+        try {
+          const token = localStorage.getItem("access_token") || localStorage.getItem("token");
+          const res = await fetch("http://127.0.0.1:8000/api/rfid/registros", {
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "application/json",
+              "Authorization": `Bearer ${token}`
+            }
+          });
+          if (res.ok) {
+            const data = await res.json();
+            const list = Array.isArray(data) ? data : data.data || [];
+            
+            const filtrados = list.filter((reg) => {
+              const estReg = reg.usuario || reg.estudiante || reg;
+              const matchCi = estReg.ci && estudiante.ci && String(estReg.ci).trim() === String(estudiante.ci).trim();
+              const matchUuid = (estReg.uuid || reg.uuid) && estudiante.uuid && String(estReg.uuid || reg.uuid).trim().toUpperCase() === String(estudiante.uuid).trim().toUpperCase();
+              const nombreReg = (estReg.nombre_completo || `${estReg.nombre || ''} ${estReg.apellido || ''}`).trim().toLowerCase();
+              const nombreEst = `${estudiante.nombre} ${estudiante.apellido}`.trim().toLowerCase();
+              const matchNombre = nombreReg && nombreReg.includes(nombreEst);
+
+              return matchCi || matchUuid || matchNombre;
+            });
+
+            setRegistrosRfid(filtrados);
+          }
+        } catch (err) {
+          console.error("Error al obtener registros RFID:", err);
+        } finally {
+          setLoadingRfid(false);
+        }
+      };
+      fetchRfid();
+    }
+  }, [isOpen, estudiante]);
+
+  if (!isOpen || !estudiante) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+      <div className="relative w-full max-w-lg overflow-hidden rounded-3xl bg-white p-6 shadow-2xl transition-all flex flex-col max-h-[85vh]">
+        
+        <div className="flex items-center justify-between border-b pb-4">
+          <div className="flex items-center gap-2">
+            <div className="p-2 rounded-xl bg-blue-50 text-blue-600">
+              <Radio size={20} className="animate-pulse" />
+            </div>
+            <div>
+              <h3 className="text-base font-black text-slate-900">Historial de Accesos RFID</h3>
+              <p className="text-xs font-semibold text-slate-500 uppercase">{estudiante.nombre} {estudiante.apellido}</p>
+            </div>
+          </div>
+          <button
+            onClick={onClose}
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-600 transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="my-4 flex items-center justify-between bg-slate-50 p-3 rounded-2xl border border-slate-100">
+          <div>
+            <span className="text-[11px] font-bold uppercase text-slate-400 block">Total de Ingresos</span>
+            <span className="text-lg font-black text-blue-600">{registrosRfid.length} accesos registrados</span>
+          </div>
+          <div className="text-right">
+            <span className="text-[11px] font-bold uppercase text-slate-400 block">C.I. / Tarjeta</span>
+            <span className="text-xs font-mono font-bold text-slate-700">{estudiante.ci || "S/CI"}</span>
+          </div>
+        </div>
+
+        <div className="overflow-y-auto flex-1 space-y-2 pr-1">
+          {loadingRfid ? (
+            <div className="flex justify-center py-10">
+              <Loader2 className="h-8 w-8 animate-spin text-blue-500" />
+            </div>
+          ) : registrosRfid.length === 0 ? (
+            <div className="text-center py-10 text-slate-400 text-xs font-medium">
+              Este estudiante no registra ingresos recientes mediante tarjeta RFID.
+            </div>
+          ) : (
+            registrosRfid.map((reg, idx) => {
+              const rawFecha = reg.created_at || reg.fecha || reg.fecha_hora || reg.timestamp || reg.time || reg.updated_at;
+              let fechaFormatted = "Fecha no registrada";
+
+              if (rawFecha) {
+                let strVal = String(rawFecha).trim();
+                let parsedDate = null;
+
+                if (strVal.includes("T") || strVal.includes("-")) {
+                  let cleanISO = strVal.replace(" ", "T");
+                  const tieneZonaHoraria = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(cleanISO);
+
+                  if (!tieneZonaHoraria) {
+                    cleanISO += "Z";
+                  }
+
+                  parsedDate = new Date(cleanISO);
+                } else {
+                  parsedDate = new Date(strVal);
+                }
+
+                if (parsedDate && !isNaN(parsedDate.getTime())) {
+                  fechaFormatted = parsedDate.toLocaleString("es-BO", {
+                    timeZone: "America/La_Paz",
+                    day: "2-digit",
+                    month: "2-digit",
+                    year: "numeric",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                    second: "2-digit",
+                    hour12: true
+                  });
+                } else {
+                  fechaFormatted = strVal;
+                }
+              }
+
+              const uuidRegistro = reg.uuid || reg.rfid_uid || estudiante.uuid || 'F0C1BB3F';
+
+              return (
+                <div key={reg.id || idx} className="flex items-center justify-between p-3 rounded-xl border border-slate-200/70 bg-white shadow-sm">
+                  <div className="flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-lg bg-emerald-50 text-emerald-600 flex items-center justify-center font-bold text-xs">
+                      #{registrosRfid.length - idx}
+                    </div>
+                    <div>
+                      <p className="text-xs font-bold text-slate-800">Acceso Exitoso por RFID</p>
+                      <p className="text-[10px] font-mono text-slate-400">UUID: {uuidRegistro}</p>
+                    </div>
+                  </div>
+                  <span className="font-mono text-xs font-bold text-orange-600 bg-orange-50 px-2.5 py-1 rounded-lg border border-orange-100">
+                    {fechaFormatted}
+                  </span>
+                </div>
+              );
+            })
+          )}
+        </div>
+
+        <div className="mt-4 pt-3 border-t flex justify-end">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2.5 rounded-xl bg-slate-900 text-xs font-bold text-white shadow-md hover:bg-slate-800 transition-all"
+          >
+            Cerrar Ventana
+          </button>
+        </div>
+
+      </div>
+    </div>,
+    document.body
+  );
+};
+
 export const BlockchainEmisionModal = ({ isOpen, onClose, modalData, onConfirmPrint }) => {
   const [render, setRender] = useState(isOpen);
   const [visible, setVisible] = useState(false);
@@ -129,8 +342,6 @@ export const BlockchainEmisionModal = ({ isOpen, onClose, modalData, onConfirmPr
   if (!render || !modalData) return null;
 
   const { estudiante, hashReal, yaExistia, message } = modalData;
-
-  // ESTA ES LA CADENA EXACTA QUE SE INYECTARÁ EN EL QR DEL PDF
   const qrStringDefinitivo = estudiante ? `NOMBRE: ${estudiante.nombre} ${estudiante.apellido} | CI: ${estudiante.ci || "S/CI"} | MONTO PAGADO: Bs. ${Number(estudiante.monto_abonado || 0).toFixed(2)} | HASH: ${estudiante.hashBoleta || hashReal}` : "";
 
   const theme = yaExistia
@@ -153,8 +364,6 @@ export const BlockchainEmisionModal = ({ isOpen, onClose, modalData, onConfirmPr
 
   const modalContent = (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 sm:p-6 select-none font-sans overflow-y-auto">
-      
-      {/* CÓDIGO QR VINCULADO DIRECTAMENTE A ESTA MODAL Y A ESTE HASH */}
       <div style={{ display: "none" }}>
         <QRCodeSVG id="modal-qr-svg" value={qrStringDefinitivo} size={200} level="H" />
       </div>
@@ -226,7 +435,7 @@ export const BlockchainEmisionModal = ({ isOpen, onClose, modalData, onConfirmPr
           <div className="mt-4 w-full text-left space-y-2 bg-gradient-to-br from-slate-50 to-orange-50/30 p-4 sm:p-5 rounded-2xl border border-orange-100/80 text-xs text-slate-700">
             <div className="flex justify-between border-b border-orange-100/60 pb-1.5">
               <span className="font-semibold text-slate-500">Estudiante:</span>
-              <span className="font-bold text-slate-900">{estudiante?.nombre} {estudiante?.apellido}</span>
+              <span className="font-bold text-slate-900 uppercase">{estudiante?.nombre} {estudiante?.apellido}</span>
             </div>
             <div className="flex justify-between border-b border-orange-100/60 pb-1.5">
               <span className="font-semibold text-slate-500">C.I.:</span>
@@ -238,19 +447,7 @@ export const BlockchainEmisionModal = ({ isOpen, onClose, modalData, onConfirmPr
             </div>
 
             <div className="pt-2">
-              <div className="flex items-center justify-between mb-1">
-                <span className="font-bold text-slate-800 text-[11px]">Hash Transacción / Blockchain:</span>
-                {hashReal && (
-                  <a
-                    href={`https://sepolia.etherscan.io/tx/${hashReal}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1 text-[10px] font-bold text-blue-600 hover:text-blue-800 transition-colors"
-                  >
-                    Etherscan <ExternalLink size={10} />
-                  </a>
-                )}
-              </div>
+              <span className="font-bold text-slate-800 text-[11px]">Hash Transacción / Blockchain:</span>
               <span className="block font-mono text-[10px] font-medium text-slate-800 break-all bg-white p-2 rounded-xl border border-slate-200/80 shadow-inner">
                 {hashReal || "Hash no registrado"}
               </span>
@@ -325,7 +522,11 @@ const blankStudent = () => ({
   historial: [],
   hashBoleta: "",
   bloque: null,
-  emitidoBlockchain: false
+  emitidoBlockchain: false,
+  usuario_id: null,
+  fotoBase64: null,
+  fotoNueva: null,
+  eliminarFoto: false
 });
 
 const obtenerFechaLocal = (fechaStr) => {
@@ -343,8 +544,6 @@ const money = (n) => `Bs. ${Number(n || 0).toFixed(2)}`;
 function initials(name = "") {
   return name.split(" ").filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
 }
-
-// ... justo debajo de: function initials(name = "") { ... }
 
 const calcularHashBoletaJS = async (estudiante, facultades) => {
   const fMain = facultades.find((f) => String(f.facultad_id) === String(estudiante.facultad_id));
@@ -379,8 +578,6 @@ const calcularHashBoletaJS = async (estudiante, facultades) => {
   return "0x" + hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 };
 
-
-
 export const EstudiantesSecretaria = () => {
   const [estudiantes, setEstudiantes] = useState([]);
   const [facultades, setFacultades] = useState([]);
@@ -405,8 +602,10 @@ export const EstudiantesSecretaria = () => {
   const [tabLista, setTabLista] = useState("sin_comprobante");
   const [showHistorial, setShowHistorial] = useState(false);
   
+  const [historialRfidModal, setHistorialRfidModal] = useState({ isOpen: false, estudiante: null });
+
   const [pagoModalData, setPagoModalData] = useState(null);
-    const [showFullImage, setShowFullImage] = useState(false);
+  const [showFullImage, setShowFullImage] = useState(false);
   const [pagoModalSaving, setPagoModalSaving] = useState(false);
 
   const [modalState, setModalState] = useState({ isOpen: false, title: "", message: "", type: "success" });
@@ -417,54 +616,49 @@ export const EstudiantesSecretaria = () => {
   const showFeedback = (title, message, type = "success") => setModalState({ isOpen: true, title, message, type });
   const closeFeedback = () => setModalState((prev) => ({ ...prev, isOpen: false }));
 
- useEffect(() => {
-     let rfidBuffer = "";
-     let lastKeyTime = Date.now();
-     let timeoutId = null;
- 
-     const procesarCodigo = (codigo) => {
-       const codigoLimpio = codigo.replace(/[^a-zA-Z0-9]/g, "").trim().toUpperCase();
-       if (codigoLimpio.length >= 4) {
-         setFormData((prev) => ({ ...prev, uuid: codigoLimpio }));
-         showFeedback("Tarjeta RFID Escaneada", `Código UUID detectado: ${codigoLimpio}`, "success");
-       }
-     };
- 
-     const handleKeyDown = (e) => {
-       if (!modoLecturaRFID || !e || !e.key) return;
- 
-       const currentTime = Date.now();
- 
-       // Si pasa demasiado tiempo entre lecturas (más de 500ms), reiniciar el acumulador
-       if (currentTime - lastKeyTime > 500) {
-         rfidBuffer = "";
-       }
-       lastKeyTime = currentTime;
- 
-       if (e.key === "Enter") {
-         if (timeoutId) clearTimeout(timeoutId);
-         procesarCodigo(rfidBuffer);
-         rfidBuffer = "";
-       } else if (e.key.length === 1) {
-         rfidBuffer += e.key;
- 
-         // Temporizador de respaldo por si el lector no envía la tecla ENTER
-         if (timeoutId) clearTimeout(timeoutId);
-         timeoutId = setTimeout(() => {
-           if (rfidBuffer.length >= 4) {
-             procesarCodigo(rfidBuffer);
-             rfidBuffer = "";
-           }
-         }, 200);
-       }
-     };
- 
-     window.addEventListener("keydown", handleKeyDown);
-     return () => {
-       window.removeEventListener("keydown", handleKeyDown);
-       if (timeoutId) clearTimeout(timeoutId);
-     };
-   }, [modoLecturaRFID]);
+  useEffect(() => {
+    let rfidBuffer = "";
+    let lastKeyTime = Date.now();
+    let timeoutId = null;
+
+    const procesarCodigo = (codigo) => {
+      const codigoLimpio = codigo.replace(/[^a-zA-Z0-9]/g, "").trim().toUpperCase();
+      if (codigoLimpio.length >= 4) {
+        setFormData((prev) => ({ ...prev, uuid: codigoLimpio }));
+        showFeedback("Tarjeta RFID Escaneada", `Código UUID detectado: ${codigoLimpio}`, "success");
+      }
+    };
+
+    const handleKeyDown = (e) => {
+      if (!modoLecturaRFID || !e || !e.key) return;
+      const currentTime = Date.now();
+      if (currentTime - lastKeyTime > 500) {
+        rfidBuffer = "";
+      }
+      lastKeyTime = currentTime;
+
+      if (e.key === "Enter") {
+        if (timeoutId) clearTimeout(timeoutId);
+        procesarCodigo(rfidBuffer);
+        rfidBuffer = "";
+      } else if (e.key.length === 1) {
+        rfidBuffer += e.key;
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => {
+          if (rfidBuffer.length >= 4) {
+            procesarCodigo(rfidBuffer);
+            rfidBuffer = "";
+          }
+        }, 200);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [modoLecturaRFID]);
 
   const previewUsername = useMemo(() => {
     if (!formData.nombre.trim() && !formData.apellido.trim()) return "@sin_asignar";
@@ -542,7 +736,7 @@ export const EstudiantesSecretaria = () => {
           if (foundFac) facId = String(foundFac.facultad_id);
         }
 
-       const cursosExtras = grupo.slice(1).map((g, i) => {
+        const cursosExtras = grupo.slice(1).map((g, i) => {
           let extraFacId = g.curso?.facultad_id ? String(g.curso?.facultad_id) : "";
           if (!extraFacId && g.curso_id) {
             const foundFac = facultadesData.find((f) => (f.cursos || []).some((c) => String(c.curso_id) === String(g.curso_id)));
@@ -550,7 +744,6 @@ export const EstudiantesSecretaria = () => {
           }
           return { id: g.inscripcion_id || Date.now() + i, facultad_id: extraFacId, curso_id: String(g.curso_id) };
         }).filter((ext, idx, self) => 
-          // Filtramos para que no se duplique con el curso principal ni se repita entre los extras
           String(ext.curso_id) !== String(ins.curso_id) && 
           idx === self.findIndex(e => String(e.curso_id) === String(ext.curso_id))
         );
@@ -558,6 +751,8 @@ export const EstudiantesSecretaria = () => {
         const estadoPagoGuardado = ultimoPago?.estado_pago || ins.estado_pago || "";
         const verificacionPago = ultimoPago?.verificacion || "pendiente";
         const rawUuid = ins.uuid || usuarioObj.uuid || ins.rfid_uid || "";
+
+        const rawUsuarioId = usuarioObj.usuario_id || postulanteObj.usuario_id || null;
 
         return {
           ...blankStudent(),
@@ -590,6 +785,8 @@ export const EstudiantesSecretaria = () => {
           hashBoleta: ins.hash_boleta || ins.hash_blockchain || "",
           bloque: ins.bloque_id || null,
           emitidoBlockchain: Boolean(ins.hash_boleta || ins.hash_blockchain),
+          usuario_id: rawUsuarioId ? Number(rawUsuarioId) : null,
+          fotoBase64: usuarioObj.foto_base64 || null,
         };
       });
 
@@ -604,6 +801,7 @@ export const EstudiantesSecretaria = () => {
       } else {
         handleNewClick(null, facultadesData, catalogosData);
       }
+      return mapeados;
     } catch (error) {
       showFeedback("Error de Carga", error.message, "error");
     } finally {
@@ -665,6 +863,8 @@ export const EstudiantesSecretaria = () => {
       estado_pago: s.estado_pago || "",
       monto_abonado: s.monto_abonado || "0.00",
       password: "",
+      fotoNueva: null,
+      eliminarFoto: false,
     });
     setIsNew(false);
     setShowHistorial(false);
@@ -716,6 +916,28 @@ export const EstudiantesSecretaria = () => {
         return item;
       })
     }));
+  };
+
+  const fotoMostrada = formData.eliminarFoto ? null : (formData.fotoNueva || formData.fotoBase64);
+
+  const handleFotoChange = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      showFeedback("Archivo no válido", "Seleccione una imagen (JPG, PNG o WEBP).", "error");
+      return;
+    }
+    try {
+      const dataUrl = await comprimirImagen(file);
+      setFormData((f) => ({ ...f, fotoNueva: dataUrl, eliminarFoto: false }));
+    } catch (err) {
+      showFeedback("Error con la foto", err.message, "error");
+    }
+  };
+
+  const handleQuitarFoto = () => {
+    setFormData((f) => ({ ...f, fotoNueva: null, eliminarFoto: Boolean(f.fotoBase64) && !isNew }));
   };
 
   const handleNewClick = (e, customFacultades = null, customCatalogos = null) => {
@@ -773,6 +995,8 @@ export const EstudiantesSecretaria = () => {
     setSaving(true);
     try {
       let activeInsId = formData.inscripcion_id;
+      let usuarioIdFoto = isNew ? null : formData.usuario_id;
+      const hayCambioFoto = Boolean(formData.fotoNueva) || formData.eliminarFoto;
       const montoAbono = Number(formData.monto_abonado || 0);
       const uuidString = String(formData.uuid || "").trim();
 
@@ -802,6 +1026,7 @@ export const EstudiantesSecretaria = () => {
             primerInsId = nuevaIns?.inscripcion_id;
             postulanteGeneradoId = nuevaIns?.postulante_id || nuevaIns?.postulante?.postulante_id;
             creds = resInscripcion.credenciales_generadas;
+            usuarioIdFoto = nuevaIns?.postulante?.usuario_id || nuevaIns?.postulante?.usuario?.usuario_id || null;
           }
         }
 
@@ -890,7 +1115,22 @@ export const EstudiantesSecretaria = () => {
         );
       }
 
-      await fetchData(activeInsId);
+      const listaActualizada = await fetchData(activeInsId);
+
+      if (hayCambioFoto) {
+        try {
+          let uid = usuarioIdFoto;
+          if (!uid) {
+            const ciGuardado = String(formData.ci).trim();
+            uid = (listaActualizada || []).find((s) => String(s.ci).trim() === ciGuardado)?.usuario_id;
+          }
+          if (!uid) throw new Error("No se pudo identificar al usuario para guardar la foto.");
+          await guardarFotoUsuario(uid, { foto: formData.fotoNueva, eliminar: formData.eliminarFoto });
+          await fetchData(activeInsId);
+        } catch (errFoto) {
+          showFeedback("Registro guardado, pero la foto no", errFoto.message, "error");
+        }
+      }
     } catch (error) {
       showFeedback("Error al Procesar", error.message, "error");
     } finally {
@@ -926,16 +1166,6 @@ export const EstudiantesSecretaria = () => {
     }
   };
 
-  const handleExportSinglePDF = (e) => {
-    if (e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }
-    generarPDFIndividual(formData);
-    showFeedback("Generando PDF", "Descargando ficha institucional del estudiante...", "info");
-  };
-
- // REEMPLAZAR DESDE LÍNEA 461
   const generarQRDataURL = async () => {
     return new Promise((resolve) => {
       const canvas = document.createElement("canvas");
@@ -943,7 +1173,6 @@ export const EstudiantesSecretaria = () => {
       canvas.height = 200;
       const ctx = canvas.getContext("2d");
 
-      // Buscar el QR exacto de la modal (siempre correcto) o usar el de reserva
       const svgElement = document.getElementById("modal-qr-svg") || document.getElementById("boleta-qr-svg");
       if (!svgElement) return resolve(null);
 
@@ -1034,7 +1263,6 @@ export const EstudiantesSecretaria = () => {
     });
   };
 
- // REEMPLAZAR DESDE LÍNEA 536
   const generarPDFBoletaOficial = async (estudiante, hashCalculadoLocal, txHash) => {
     const doc = new jsPDF({
       orientation: "portrait",
@@ -1084,7 +1312,6 @@ export const EstudiantesSecretaria = () => {
     doc.text(`Cédula de Identidad: ${estudiante.ci}`, 125, currentY);
 
     const facultadesConCursos = {};
-
     const fMain = facultades.find((f) => String(f.facultad_id) === String(estudiante.facultad_id));
     const mainFacName = fMain ? fMain.nombre : "Facultad General";
     let mainCourseName = "Programa Académico";
@@ -1157,7 +1384,8 @@ export const EstudiantesSecretaria = () => {
     doc.setFont("helvetica", "normal");
     doc.setTextColor(...INK.ink);
     doc.text(`Concepto: ${estudiante.concepto_pago || "Abono / Matrícula"}`, 16, currentY);
-doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR") || (estudiante.medio_pago || "Ventanilla").includes("M") ? "Pago Móvil QR" : estudiante.medio_pago}`, 125, currentY);
+    doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR") || (estudiante.medio_pago || "Ventanilla").includes("M") ? "Pago Móvil QR" : estudiante.medio_pago}`, 125, currentY);
+
     currentY += 6;
     doc.text(`Fecha de Transacción: ${estudiante.fechaPago || new Date().toISOString().split("T")[0]}`, 16, currentY);
     doc.text(`Estado del Pago: ${estudiante.estado_pago || "Completado"}`, 125, currentY);
@@ -1173,8 +1401,6 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
     doc.text("3. CÓDIGO QR Y VALIDACIÓN DE SEGURIDAD (VINCULADO A SUS CURSOS)", 12, currentY);
 
     currentY += 6;
-
-    // Llamada directa, sin esperas de setTimeout
     const qrDataUrl = await generarQRDataURL();
     if (qrDataUrl) {
       doc.addImage(qrDataUrl, "PNG", 12, currentY, 38, 38);
@@ -1211,10 +1437,8 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
 
       const stringTodosLosCursos = [mainCourseName, ...extraCoursesNames].join(" | ");
 
-      // 1. Calcular el Hash Local con SHA-256
       const hashCalculadoLocal = await calcularHashBoletaJS(targetStudent, facultades);
 
-      // 2. Enviar el payload incluyendo el hash calculado
       const boletaPayload = {
         postulanteId: targetStudent.postulante_id || targetStudent.inscripcion_id,
         nombreCompleto: `${targetStudent.nombre} ${targetStudent.apellido}`.trim(),
@@ -1232,13 +1456,11 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
 
       const respuesta = await blockchainBoletaService.certificar(boletaPayload);
 
-      // 3. Obtener el Hash real dictado por el backend
       const hashReal = respuesta.hashBoletin || respuesta.hash || hashCalculadoLocal;
       const txHash = respuesta.txHash || hashReal;
       const yaExistia = respuesta.yaExistia || false;
       const messageResponse = respuesta.message || (yaExistia ? "El registro ya se encontraba previamente verificado en el libro contable inmutable." : "El registro ha sido firmado y almacenado de forma permanente.");
 
-      // 4. Actualizar usando hashReal en lugar de hashCalculadoLocal
       const updatedStudent = {
         ...targetStudent,
         hashBoleta: hashReal,
@@ -1265,7 +1487,6 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
           yaExistia: yaExistia,
           message: messageResponse,
         },
-        // 5. Pasar hashReal a la función de PDF
         onConfirmPrint: () => generarPDFBoletaOficial(updatedStudent, hashReal, txHash),
       });
 
@@ -1282,11 +1503,8 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
     setPagoModalSaving(true);
     try {
       const nuevoEstado = pagoModalData.verificacion === 'verificado' ? 'rechazado' : 'verificado';
-      
       await pagosService.update(pagoModalData.pago_id, { verificacion: nuevoEstado });
-      
       showFeedback("Verificación Actualizada", `El comprobante de pago ha sido marcado como ${nuevoEstado.toUpperCase()}.`, "success");
-      
       setPagoModalData((prev) => ({ ...prev, verificacion: nuevoEstado }));
       await fetchData(pagoModalData.inscripcion_id);
     } catch (error) {
@@ -1492,7 +1710,7 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
             </button>
           </div>
 
-          <div className="max-h-[620px] overflow-y-auto divide-y divide-slate-100 p-2 ">
+          <div className="max-h-[620px] overflow-y-auto divide-y divide-slate-100 p-2">
             {filtered.length === 0 ? (
               <p className="p-8 text-center text-sm font-medium text-slate-400">
                 Ningún estudiante coincide con los filtros aplicados.
@@ -1516,10 +1734,14 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
                     >
                       <div
                         className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-xs font-black shadow-inner ${
-                          active ? "bg-orange-500 text-white" : "bg-[#0B1120] text-orange-400"
+                          active ? "bg-orange-500 text-white" : "bg-[#0B1120] text-orange-400 "
                         }`}
                       >
-                        {initials(`${s.nombre} ${s.apellido}`)}
+                        {s.fotoBase64 ? (
+                          <img src={s.fotoBase64} alt="" className="h-full w-full rounded-xl object-cover" />
+                        ) : (
+                          initials(`${s.nombre} ${s.apellido}`)
+                        )}
                       </div>
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-1.5">
@@ -1544,6 +1766,18 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
                         className="p-2 text-slate-400 hover:text-emerald-600 hover:bg-emerald-100/60 rounded-lg transition-colors"
                       >
                         <Eye size={16} />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setHistorialRfidModal({ isOpen: true, estudiante: s });
+                        }}
+                        title="Ver Historial de Accesos RFID"
+                        className="p-2 text-blue-500 hover:bg-blue-100/60 rounded-lg transition-colors"
+                      >
+                        <Radio size={16} />
                       </button>
 
                       <button
@@ -1599,8 +1833,10 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
                   C.I. {formData.ci || "—"} · Usuario: <span className="font-mono text-orange-300">{isNew ? previewUsername : formData.username}</span>
                 </p>
               </div>
-              <div className="flex h-16 w-16 items-center justify-center rounded-2xl border-2 border-orange-400/60 bg-white/5 text-xl font-black text-orange-300 shadow-inner">
-                {formData.nombre ? (
+              <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl border-2 border-orange-400/60 bg-white/5 text-xl font-black text-orange-300 shadow-inner">
+                {fotoMostrada ? (
+                  <img src={fotoMostrada} alt="Foto del estudiante" className="h-full w-full object-cover" />
+                ) : formData.nombre ? (
                   initials(`${formData.nombre} ${formData.apellido}`)
                 ) : (
                   <User size={26} />
@@ -1625,6 +1861,7 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
           </div>
 
           <Section icon={User} title="Identidad del Estudiante y Credencial RFID">
+            {/* 1. DATOS PRINCIPALES */}
             <Field label="Nombres *">
               <input
                 type="text"
@@ -1666,6 +1903,47 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
               />
             </Field>
 
+            {/* 2. NOMBRE DE USUARIO Y CONTRASEÑA */}
+            {isNew ? (
+              <div className="md:col-span-2 rounded-xl border border-amber-200/80 bg-amber-50/70 p-4 text-xs text-amber-900">
+                <div className="flex items-center gap-2 font-bold uppercase tracking-wider text-amber-800 mb-1.5">
+                  <Sparkles size={15} /> Credenciales Iniciales Autogeneradas
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-2 font-mono">
+                  <span className="bg-white px-3 py-2 rounded-lg border border-amber-200/80 shadow-sm">
+                    Usuario: <strong>{previewUsername}</strong>
+                  </span>
+                  <span className="bg-white px-3 py-2 rounded-lg border border-amber-200/80 shadow-sm">
+                    Contraseña: <strong>{previewPassword}</strong>
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <>
+                <Field label="Nombre de Usuario (Auth) *" icon={User}>
+                  <input
+                    type="text"
+                    name="username"
+                    value={formData.username}
+                    onChange={handleInputChange}
+                    placeholder="@ana_torrez"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-mono font-bold text-slate-800 outline-none transition-colors focus:border-orange-400 focus:bg-white"
+                  />
+                </Field>
+                <Field label="Cambiar Contraseña (Opcional)" icon={Lock}>
+                  <input
+                    type="text"
+                    name="password"
+                    value={formData.password}
+                    onChange={handleInputChange}
+                    placeholder="Dejar vacío para conservar actual"
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-800 outline-none transition-colors focus:border-orange-400 focus:bg-white"
+                  />
+                </Field>
+              </>
+            )}
+
+            {/* 3. LECTOR RFID / UUID (PENÚLTIMO) */}
             <div className="md:col-span-2 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 transition-all">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-3">
                 <div className="flex items-center gap-2">
@@ -1731,44 +2009,44 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
               </div>
             </div>
 
-            {isNew ? (
-              <div className="md:col-span-2 rounded-xl border border-amber-200/80 bg-amber-50/70 p-4 text-xs text-amber-900">
-                <div className="flex items-center gap-2 font-bold uppercase tracking-wider text-amber-800 mb-1.5">
-                  <Sparkles size={15} /> Credenciales Iniciales Autogeneradas
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 mt-2 font-mono">
-                  <span className="bg-white px-3 py-2 rounded-lg border border-amber-200/80 shadow-sm">
-                    Usuario: <strong>{previewUsername}</strong>
-                  </span>
-                  <span className="bg-white px-3 py-2 rounded-lg border border-amber-200/80 shadow-sm">
-                    Contraseña: <strong>{previewPassword}</strong>
-                  </span>
+            {/* 4. FOTOGRAFÍA DEL ESTUDIANTE (ÚLTIMO) */}
+            <div className="md:col-span-2 rounded-2xl border border-orange-100 bg-gradient-to-r from-orange-50/50 via-amber-50/20 to-white p-5 shadow-sm flex flex-col sm:flex-row items-center gap-5">
+              <div className="shrink-0 relative group">
+                <div className="flex h-24 w-24 items-center justify-center overflow-hidden rounded-2xl border-2 border-white shadow-md bg-white text-orange-400 ring-2 ring-orange-200/50">
+                  {fotoMostrada ? (
+                    <img src={fotoMostrada} alt="Foto del estudiante" className="h-full w-full object-cover" />
+                  ) : (
+                    <Camera size={32} />
+                  )}
                 </div>
               </div>
-            ) : (
-              <>
-                <Field label="Nombre de Usuario*" icon={User}>
-                  <input
-                    type="text"
-                    name="username"
-                    value={formData.username}
-                    onChange={handleInputChange}
-                    placeholder="@ana_torrez"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-mono font-bold text-slate-800 outline-none transition-colors focus:border-orange-400 focus:bg-white"
-                  />
-                </Field>
-                <Field label="Cambiar Contraseña (Opcional)" icon={Lock}>
-                  <input
-                    type="text"
-                    name="password"
-                    value={formData.password}
-                    onChange={handleInputChange}
-                    placeholder="Dejar vacío para conservar actual"
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-800 outline-none transition-colors focus:border-orange-400 focus:bg-white"
-                  />
-                </Field>
-              </>
-            )}
+              <div className="flex-1 text-center sm:text-left space-y-2 w-full">
+                <div>
+                  <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800">
+                    Fotografía del Estudiante
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Se mostrará al leer la tarjeta RFID. Formatos: JPG, PNG o WEBP (Máx. 2MB).
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2.5 pt-1">
+                  <label className="flex cursor-pointer items-center gap-2 px-4 py-2.5 bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white text-xs font-bold rounded-xl shadow-md shadow-orange-500/20 transition-all active:scale-95">
+                    <Upload size={14} /> {fotoMostrada ? "Cambiar foto" : "Elegir foto"}
+                    <input type="file" accept="image/*" className="hidden" onChange={handleFotoChange} />
+                  </label>
+                  {fotoMostrada && (
+                    <button
+                      type="button"
+                      onClick={handleQuitarFoto}
+                      className="flex items-center gap-1.5 px-4 py-2.5 bg-white hover:bg-rose-50 text-rose-600 text-xs font-bold rounded-xl border border-rose-200 shadow-sm transition-all active:scale-95"
+                    >
+                      <Trash2 size={14} /> Quitar
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+
           </Section>
 
           <Section icon={BookOpen} title="Asignación Académica (Programas)">
@@ -1831,7 +2109,9 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
                 <div key={extra.id || idx} className="md:col-span-2 flex items-end gap-2 bg-orange-50/50 p-3 rounded-2xl border border-orange-200/60 animate-in fade-in duration-200">
                   <div className="flex-1 grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      
+                      <label className="mb-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-orange-700">
+                        Facultad Extra #{idx + 2}
+                      </label>
                       <select
                         value={extra.facultad_id}
                         onChange={(e) => handleCursoExtraChange(extra.id, "facultad_id", e.target.value)}
@@ -1847,7 +2127,9 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
                     </div>
 
                     <div>
-                     
+                      <label className="mb-1 flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-orange-700">
+                        Curso Extra #{idx + 2}
+                      </label>
                       <select
                         value={extra.curso_id}
                         onChange={(e) => handleCursoExtraChange(extra.id, "curso_id", e.target.value)}
@@ -1902,7 +2184,7 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
             </Field>
           </Section>
 
-          <Section icon={DollarSign} title="Registro de Pago">
+          <Section icon={DollarSign} title="Registro de Pago y Liquidación">
             <Field label="Monto a Cobrar / Abonar (Bs.) *">
               <input
                 type="number"
@@ -1922,19 +2204,17 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
                 onChange={handleInputChange}
                 className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm font-medium text-slate-800 outline-none transition-colors focus:border-orange-400 focus:bg-white"
               >
-                {catalogos.medios_pago.map((m) => {
-  // Limpiamos el texto si contiene la palabra QR o Móvil
-  let textoMostrado = m.nombre;
-  if (m.nombre.includes("QR") || m.nombre.includes("M") || m.nombre.includes("Móvil")) {
-    textoMostrado = "Pago Móvil QR";
-  }
-
-  return (
-    <option key={m.medio_pago_id} value={m.nombre}>
-      {textoMostrado}
-    </option>
-  );
-})}
+               {catalogos.medios_pago.map((m) => {
+                  let textoMostrado = m.nombre;
+                  if (m.nombre.includes("QR") || m.nombre.includes("M") || m.nombre.includes("Móvil")) {
+                    textoMostrado = "Pago Móvil QR";
+                  }
+                  return (
+                    <option key={m.medio_pago_id} value={m.nombre}>
+                      {textoMostrado}
+                    </option>
+                  );
+                })}
               </select>
             </Field>
 
@@ -2030,7 +2310,6 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
                   <Plus size={15} /> Nuevo
                 </button>
 
-
                 <button
                   type="button"
                   onClick={(e) => handleCertificarYPreguntarImpresion(e)}
@@ -2062,6 +2341,12 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
         </div>
       </div>
 
+      <HistorialRfidModal
+        isOpen={historialRfidModal.isOpen}
+        onClose={() => setHistorialRfidModal({ isOpen: false, estudiante: null })}
+        estudiante={historialRfidModal.estudiante}
+      />
+
       <FeedbackModal
         isOpen={modalState.isOpen}
         onClose={closeFeedback}
@@ -2084,151 +2369,149 @@ doc.text(`Medio de Pago: ${(estudiante.medio_pago || "Ventanilla").includes("QR"
         onConfirmPrint={blockchainModalState.onConfirmPrint}
       />
 
-     {pagoModalData && createPortal(
-            <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-              <div className="relative w-full max-w-lg bg-white rounded-3xl p-6 shadow-2xl flex flex-col max-h-[90vh]">
-                
-                <button 
-                  onClick={() => { setPagoModalData(null); setShowFullImage(false); }}
-                  className="absolute top-4 right-4 p-2 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 transition-colors"
-                >
-                  <X size={18} />
-                </button>
-    
-                <h3 className="text-lg font-black text-slate-800 border-b pb-3 flex items-center gap-2">
-                  <Eye className="text-orange-500" size={22} /> Detalles de Pago y Comprobante
-                </h3>
-    
-                <div className="flex-1 overflow-y-auto pr-1 py-4 space-y-4">
-                  <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
-                    <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Información del Estudiante</p>
-                    <div className="grid grid-cols-2 gap-3 text-sm">
-                      <div>
-                        <span className="block text-slate-500 text-[11px]">Estudiante</span>
-                        <strong className="text-slate-800 uppercase">{pagoModalData.nombre} {pagoModalData.apellido}</strong>
-                      </div>
-                      <div>
-                        <span className="block text-slate-500 text-[11px]">Inscripción / CI</span>
-                        <strong className="text-slate-800">{pagoModalData.codigo_inscripcion} · CI {pagoModalData.ci}</strong>
-                      </div>
-                      <div>
-                        <span className="block text-slate-500 text-[11px]">Abono Reportado</span>
-                        <strong className="text-emerald-600">Bs. {Number(pagoModalData.monto_abonado)}</strong>
-                      </div>
-                      <div>
-                        <span className="block text-slate-500 text-[11px]">Estado de Verificación</span>
-                        <strong className={`uppercase text-[11px] px-2 py-0.5 rounded ${
-                          pagoModalData.verificacion === 'verificado' 
-                            ? 'bg-emerald-100 text-emerald-700' 
-                            : pagoModalData.verificacion === 'rechazado' 
-                              ? 'bg-red-100 text-red-700' 
-                              : 'bg-amber-100 text-amber-700'
-                        }`}>
-                          {pagoModalData.verificacion || "PENDIENTE"}
-                        </strong>
-                      </div>
-                    </div>
-    
-                    <div className="mt-3 pt-3 border-t border-slate-200/60">
-                      <span className="block text-slate-500 text-[11px] mb-1">Cursos Tomados en esta Inscripción</span>
-                      <ul className="list-disc list-inside text-[11px] font-bold text-slate-700">
-                        {getCursosModal(pagoModalData).map((cName, i) => (
-                          <li key={i} className="truncate">{cName}</li>
-                        ))}
-                      </ul>
-                    </div>
+      {pagoModalData && createPortal(
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+          <div className="relative w-full max-w-lg bg-white rounded-3xl p-6 shadow-2xl flex flex-col max-h-[90vh]">
+            
+            <button 
+              onClick={() => { setPagoModalData(null); setShowFullImage(false); }}
+              className="absolute top-4 right-4 p-2 bg-slate-100 text-slate-500 rounded-full hover:bg-slate-200 transition-colors"
+            >
+              <X size={18} />
+            </button>
+
+            <h3 className="text-lg font-black text-slate-800 border-b pb-3 flex items-center gap-2">
+              <Eye className="text-orange-500" size={22} /> Detalles de Pago y Comprobante
+            </h3>
+
+            <div className="flex-1 overflow-y-auto pr-1 py-4 space-y-4">
+              <div className="bg-slate-50 rounded-xl p-4 border border-slate-200">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Información del Estudiante</p>
+                <div className="grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <span className="block text-slate-500 text-[11px]">Estudiante</span>
+                    <strong className="text-slate-800 uppercase">{pagoModalData.nombre} {pagoModalData.apellido}</strong>
                   </div>
-    
-                  {pagoModalData.fotoComprobante ? (
-                    <div className="border border-slate-200 rounded-xl p-4 bg-white flex flex-col items-center">
-                      <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 self-start">Comprobante Adjunto</p>
-                      <button
-                        type="button"
-                        onClick={() => setShowFullImage(true)}
-                        className="flex items-center gap-2 px-5 py-3 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs shadow-md transition-all active:scale-95"
-                      >
-                        <Eye size={16} /> Ver Comprobante en Grande
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="border border-dashed border-slate-300 rounded-xl p-8 bg-slate-50 flex flex-col items-center text-center">
-                      <span className="p-3 bg-white shadow-sm rounded-full mb-2">
-                        <FileText size={24} className="text-slate-300" />
-                      </span>
-                      <p className="text-sm font-bold text-slate-500">Sin Comprobante de Pago</p>
-                      <p className="text-xs text-slate-400 mt-1">El estudiante no subió una foto del comprobante para este pago.</p>
-                    </div>
+                  <div>
+                    <span className="block text-slate-500 text-[11px]">Inscripción / CI</span>
+                    <strong className="text-slate-800">{pagoModalData.codigo_inscripcion} · CI {pagoModalData.ci}</strong>
+                  </div>
+                  <div>
+                    <span className="block text-slate-500 text-[11px]">Abono Reportado</span>
+                    <strong className="text-emerald-600">Bs. {Number(pagoModalData.monto_abonado)}</strong>
+                  </div>
+                  <div>
+                    <span className="block text-slate-500 text-[11px]">Estado de Verificación</span>
+                    <strong className={`uppercase text-[11px] px-2 py-0.5 rounded ${
+                      pagoModalData.verificacion === 'verificado' 
+                        ? 'bg-emerald-100 text-emerald-700' 
+                        : pagoModalData.verificacion === 'rechazado' 
+                          ? 'bg-red-100 text-red-700' 
+                          : 'bg-amber-100 text-amber-700'
+                    }`}>
+                      {pagoModalData.verificacion || "PENDIENTE"}
+                    </strong>
+                  </div>
+                </div>
+
+                <div className="mt-3 pt-3 border-t border-slate-200/60">
+                  <span className="block text-slate-500 text-[11px] mb-1">Cursos Tomados en esta Inscripción</span>
+                  <ul className="list-disc list-inside text-[11px] font-bold text-slate-700">
+                    {getCursosModal(pagoModalData).map((cName, i) => (
+                      <li key={i} className="truncate">{cName}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+
+              {pagoModalData.fotoComprobante ? (
+                <div className="border border-slate-200 rounded-xl p-4 bg-white flex flex-col items-center">
+                  <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3 self-start">Comprobante Adjunto</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowFullImage(true)}
+                    className="flex items-center gap-2 px-5 py-3 rounded-xl bg-orange-500 hover:bg-orange-600 text-white font-bold text-xs shadow-md transition-all active:scale-95"
+                  >
+                    <Eye size={16} /> Ver Comprobante en Grande
+                  </button>
+                </div>
+              ) : (
+                <div className="border border-dashed border-slate-300 rounded-xl p-8 bg-slate-50 flex flex-col items-center text-center">
+                  <span className="p-3 bg-white shadow-sm rounded-full mb-2">
+                    <FileText size={24} className="text-slate-300" />
+                  </span>
+                  <p className="text-sm font-bold text-slate-500">Sin Comprobante de Pago</p>
+                  <p className="text-xs text-slate-400 mt-1">El estudiante no subió una foto del comprobante para este pago.</p>
+                </div>
+              )}
+            </div>
+
+            {pagoModalData.fotoComprobante && (
+              <div className="border-t pt-4 flex items-center justify-between mt-auto">
+                <span className="text-xs text-slate-500 font-medium">Revisión por Secretaría:</span>
+                <div className="flex gap-2">
+                  {pagoModalData.verificacion !== 'rechazado' && (
+                    <button
+                      onClick={handleToggleEstadoVerificacionPago}
+                      disabled={pagoModalSaving}
+                      className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all ${
+                        pagoModalData.verificacion === 'verificado'
+                          ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200' 
+                          : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md'
+                      }`}
+                    >
+                      {pagoModalSaving ? (
+                        <Loader2 size={14} className="animate-spin" />
+                      ) : (
+                        <>
+                          {pagoModalData.verificacion === 'verificado' ? <Ban size={14} /> : <Check size={14} />} 
+                          {pagoModalData.verificacion === 'verificado' ? 'Rechazar Pago' : 'Aprobar Pago'}
+                        </>
+                      )}
+                    </button>
+                  )}
+                  {pagoModalData.verificacion === 'rechazado' && (
+                    <button
+                      onClick={handleToggleEstadoVerificacionPago}
+                      disabled={pagoModalSaving}
+                      className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all bg-emerald-600 text-white hover:bg-emerald-700 shadow-md"
+                    >
+                      {pagoModalSaving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Aprobar Pago</>}
+                    </button>
                   )}
                 </div>
-    
-                {pagoModalData.fotoComprobante && (
-                  <div className="border-t pt-4 flex items-center justify-between mt-auto">
-                    <span className="text-xs text-slate-500 font-medium">Revisión por Secretaría:</span>
-                    <div className="flex gap-2">
-                      {pagoModalData.verificacion !== 'rechazado' && (
-                        <button
-                          onClick={handleToggleEstadoVerificacionPago}
-                          disabled={pagoModalSaving}
-                          className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all ${
-                            pagoModalData.verificacion === 'verificado'
-                              ? 'bg-red-50 text-red-600 hover:bg-red-100 border border-red-200' 
-                              : 'bg-emerald-600 text-white hover:bg-emerald-700 shadow-md'
-                          }`}
-                        >
-                          {pagoModalSaving ? (
-                            <Loader2 size={14} className="animate-spin" />
-                          ) : (
-                            <>
-                              {pagoModalData.verificacion === 'verificado' ? <Ban size={14} /> : <Check size={14} />} 
-                              {pagoModalData.verificacion === 'verificado' ? 'Rechazar Pago' : 'Aprobar Pago'}
-                            </>
-                          )}
-                        </button>
-                      )}
-                      {pagoModalData.verificacion === 'rechazado' && (
-                        <button
-                          onClick={handleToggleEstadoVerificacionPago}
-                          disabled={pagoModalSaving}
-                          className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-all bg-emerald-600 text-white hover:bg-emerald-700 shadow-md"
-                        >
-                          {pagoModalSaving ? <Loader2 size={14} className="animate-spin" /> : <><Check size={14} /> Aprobar Pago</>}
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                )}
-                
-                {/* MODAL SECUNDARIA PARA VER LA IMAGEN EN GRANDE */}
-                {showFullImage && pagoModalData.fotoComprobante && createPortal(
-                  <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
-                    <div className="relative max-w-4xl max-h-[95vh] flex flex-col items-center">
-                      <button
-                        onClick={() => setShowFullImage(false)}
-                        className="absolute -top-12 right-0 flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/40 transition-colors"
-                      >
-                        <X size={22} />
-                      </button>
-                      <img
-                        src={pagoModalData.fotoComprobante.startsWith('data:') ? pagoModalData.fotoComprobante : `data:image/jpeg;base64,${pagoModalData.fotoComprobante}`}
-                        alt="Comprobante Ampliado"
-                        className="max-h-[85vh] max-w-full object-contain rounded-2xl shadow-2xl border border-white/10 bg-black/40"
-                      />
-                      <button
-                        onClick={() => setShowFullImage(false)}
-                        className="mt-4 px-6 py-2.5 rounded-xl bg-white text-slate-900 font-bold text-xs shadow-lg hover:bg-slate-100 transition-all active:scale-95"
-                      >
-                        Cerrar Imagen
-                      </button>
-                    </div>
-                  </div>,
-                  document.body
-                )}
-    
               </div>
-            </div>,
-            document.body
-          )}
-    
+            )}
+            
+            {showFullImage && pagoModalData.fotoComprobante && createPortal(
+              <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
+                <div className="relative max-w-4xl max-h-[95vh] flex flex-col items-center">
+                  <button
+                    onClick={() => setShowFullImage(false)}
+                    className="absolute -top-12 right-0 flex h-10 w-10 items-center justify-center rounded-full bg-white/20 text-white hover:bg-white/40 transition-colors"
+                  >
+                    <X size={22} />
+                  </button>
+                  <img
+                    src={pagoModalData.fotoComprobante.startsWith('data:') ? pagoModalData.fotoComprobante : `data:image/jpeg;base64,${pagoModalData.fotoComprobante}`}
+                    alt="Comprobante Ampliado"
+                    className="max-h-[85vh] max-w-full object-contain rounded-2xl shadow-2xl border border-white/10 bg-black/40"
+                  />
+                  <button
+                    onClick={() => setShowFullImage(false)}
+                    className="mt-4 px-6 py-2.5 rounded-xl bg-white text-slate-900 font-bold text-xs shadow-lg hover:bg-slate-100 transition-all active:scale-95"
+                  >
+                    Cerrar Imagen
+                  </button>
+                </div>
+              </div>,
+              document.body
+            )}
+
+          </div>
+        </div>,
+        document.body
+      )}
 
     </div>
   );

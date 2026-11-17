@@ -69,7 +69,7 @@ export const ActualizarPerfilEstudiante = () => {
         const sessionUsername = parsedUser?.username || localStorage.getItem("username");
 
         // Consultar /api/usuarios
-        const response = await fetch(import.meta.env.VITE_API_URL + "/api/usuarios", { headers: authHeaders });
+        const response = await fetch("http://127.0.0.1:8000/api/usuarios", { headers: authHeaders });
         if (!response.ok) throw new Error("Error al consultar la base de datos de usuarios.");
         
         const listaUsuarios = await response.json();
@@ -152,7 +152,7 @@ export const ActualizarPerfilEstudiante = () => {
         payload.password = formData.password.trim();
       }
 
-      
+      // Llamada PUT a http://127.0.0.1:8000/api/usuarios/{usuario_id}
       const res = await studentService.update(formData.usuario_id, payload);
       const usuarioActualizado = res.usuario || res.user || res;
 

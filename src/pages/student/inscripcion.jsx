@@ -106,7 +106,7 @@ export const BlockchainEmisionModal = ({ isOpen, onClose, modalData, onConfirmPr
         iconBg: "bg-gradient-to-br from-emerald-400 to-emerald-600",
         glowColor: "bg-emerald-500/20",
         btnBg: "bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 shadow-emerald-700/25",
-        title: "Emisión Exitosa en Blockchain",
+        title: "Emisión Exitosa en Smart Contract",
         subtitle: "Registro inmutable verificado",
       };
 
@@ -388,10 +388,10 @@ export const TomaMateriasEstudiante = () => {
         inscripcionesService.getAll().catch(() => []),
         pagosService.getAll().catch(() => []),
         qrInstitucionalService.getAll().catch(() => []),
-        fetch(import.meta.env.VITE_API_URL + "/api/usuarios", { headers: authHeaders })
+        fetch("http://127.0.0.1:8000/api/usuarios", { headers: authHeaders })
           .then((res) => (res.ok ? res.json() : []))
           .catch(() => []),
-        fetch(import.meta.env.VITE_API_URL + "/api/postulantes", { headers: authHeaders })
+        fetch("http://127.0.0.1:8000/api/postulantes", { headers: authHeaders })
           .then((res) => (res.ok ? res.json() : []))
           .catch(() => [])
       ]);
@@ -641,14 +641,9 @@ export const TomaMateriasEstudiante = () => {
         formData.append("foto_comprobante", fotoComprobante);
       }
 
-
-      
-          
-            
-
       const token = localStorage.getItem("access_token") || localStorage.getItem("token");
 
-      const response = await fetch(import.meta.env.VITE_API_URL + "/api/pagos", {
+      const response = await fetch("http://127.0.0.1:8000/api/pagos", {
         method: "POST",
         headers: {
           "Accept": "application/json",

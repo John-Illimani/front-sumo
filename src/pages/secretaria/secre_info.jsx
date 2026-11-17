@@ -16,7 +16,9 @@ import {
   Maximize2,
   Check,
   Eye,
-  Trash2
+  Trash2,
+  Radio,
+  History
 } from "lucide-react";
 
 import { studentService } from "../../services/admin/studentService";
@@ -33,6 +35,7 @@ export const DashboardSecretaria = ({ onNavigate = () => {} }) => {
   const [estudiantes, setEstudiantes] = useState([]);
   const [cursosActivos, setCursosActivos] = useState([]);
   const [pagosRecientes, setPagosRecientes] = useState([]);
+  const [registrosRfid, setRegistrosRfid] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Estados QR / Cuentas
@@ -70,29 +73,33 @@ export const DashboardSecretaria = ({ onNavigate = () => {} }) => {
   const cargarTodo = useCallback(async () => {
     setLoading(true);
     try {
-      // 1. Petición paralela a servicios principales y lista completa de usuarios
       const token = localStorage.getItem("access_token") || localStorage.getItem("token");
-      
-      const [dataEstudiantes, dataCursos, dataPagos, qrs, resUsuarios] = await Promise.all([
+      const headersAuth = {
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "Authorization": `Bearer ${token}`
+      };
+
+      const [dataEstudiantes, dataCursos, dataPagos, qrs, resUsuarios, resRfid] = await Promise.all([
         studentService.getAll().catch(() => []),
         cursosService.getAll().catch(() => []),
         pagosService.getAll().catch(() => []),
         qrInstitucionalService.getAll().catch(() => []),
-        fetch(import.meta.env.VITE_API_URL + "/api/usuarios", {
-          headers: {
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-            "Authorization": `Bearer ${token}`
-          }
-        }).then(res => res.ok ? res.json() : []).catch(() => [])
+        fetch("http://127.0.0.1:8000/api/usuarios", { headers: headersAuth })
+          .then((res) => (res.ok ? res.json() : []))
+          .catch(() => []),
+        fetch("http://127.0.0.1:8000/api/rfid/registros", { headers: headersAuth })
+          .then((res) => (res.ok ? res.json() : []))
+          .catch(() => [])
       ]);
 
       setEstudiantes(dataEstudiantes);
       setCursosActivos(dataCursos.filter((c) => c.estado === "activo"));
       setPagosRecientes(dataPagos);
       setQrsList(qrs);
+      setRegistrosRfid(Array.isArray(resRfid) ? resRfid : resRfid.data || []);
 
-      // 2. Obtener el username guardado en localStorage al iniciar sesión
+      // Búsqueda del usuario en sesión por su 'username' exacto
       const savedUserStr = localStorage.getItem("user");
       let usernameTarget = null;
 
@@ -105,28 +112,20 @@ export const DashboardSecretaria = ({ onNavigate = () => {} }) => {
         }
       }
 
-      // Fallback si no está directo en 'user'
       if (!usernameTarget) {
         usernameTarget = localStorage.getItem("username");
       }
 
-      // 3. Buscar en el array de usuarios por el 'username' exacto
       if (usernameTarget && Array.isArray(resUsuarios) && resUsuarios.length > 0) {
         const usuarioEncontrado = resUsuarios.find(
           (u) => u.username?.toLowerCase() === String(usernameTarget).toLowerCase()
         );
-
-        if (usuarioEncontrado) {
-          setUsuarioLogueado(usuarioEncontrado);
-        } else {
-          setUsuarioLogueado(null);
-        }
+        setUsuarioLogueado(usuarioEncontrado || null);
       } else {
         setUsuarioLogueado(null);
       }
-
     } catch (error) {
-      console.error("Error al cargar dashboard de secretaría:", error);
+      console.error("Error al cargar dashboard:", error);
     } finally {
       setLoading(false);
     }
@@ -256,22 +255,21 @@ export const DashboardSecretaria = ({ onNavigate = () => {} }) => {
     }
   };
 
-  // Nombre del usuario encontrado por username
   const nombreUsuarioLogueado = usuarioLogueado
     ? `${usuarioLogueado.nombre || ""} ${usuarioLogueado.apellido || ""}`.trim()
-    : "Secretaría / Recepción";
+    : "Administrador";
 
   return (
     <div className="relative flex w-full min-h-[85vh] flex-col gap-5 p-4 sm:p-6 font-sans border border-orange-200/70 rounded-3xl bg-orange-50/40">
       
       {/* Header Panel */}
-      <div className="relative overflow-hidden rounded-2xl bg-[#0B1120] p-6 text-white shadow-lg">
+      <div className=" overflow-hidden rounded-2xl bg-[#0B1120] p-6 text-white shadow-lg sticky top z-10  ">
         <div className="relative flex flex-col justify-between gap-4 md:flex-row md:items-center">
           <div>
             <div className="flex items-center gap-2">
               <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 px-2.5 py-0.5 text-[11px] font-bold text-emerald-400">
                 <span className="h-2 w-2 rounded-full bg-emerald-400 animate-ping" />
-                Módulo Secretaría
+                Sistema Activo
               </span>
               <span className="text-xs text-slate-400">|</span>
               <span className="text-xs font-semibold text-slate-400">
@@ -280,7 +278,7 @@ export const DashboardSecretaria = ({ onNavigate = () => {} }) => {
             </div>
 
             <h1 className="mt-2 text-2xl sm:text-3xl font-black tracking-tight text-white">
-              Panel de Atención y Registro
+              Panel de Control General Secretaría
             </h1>
           </div>
 
@@ -326,42 +324,125 @@ export const DashboardSecretaria = ({ onNavigate = () => {} }) => {
         </div>
       </div>
 
-      {/* Tabla Pagos */}
-      <div className="rounded-2xl border border-slate-200/60 bg-white shadow-sm overflow-hidden">
-        <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
-          <h3 className="text-sm font-bold text-slate-800">Pagos Recientes</h3>
-          <span className="text-[11px] font-semibold text-slate-400">Comprobantes procesados</span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-[10px]">
-              <tr>
-                <th className="px-5 py-3">Recibo</th>
-                <th className="px-5 py-3">Concepto</th>
-                <th className="px-5 py-3">Medio</th>
-                <th className="px-5 py-3">Monto</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {pagosRecientes.length === 0 ? (
+      {/* SECCIÓN PRINCIPAL: Tablas (Pagos Recientes e Historial de Accesos RFID) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+        
+        {/* Tabla Pagos Recientes */}
+        <div className="rounded-2xl border border-slate-200/60 bg-white shadow-sm overflow-hidden flex flex-col">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <CreditCard size={16} className="text-orange-500" /> Pagos Recientes
+            </h3>
+          </div>
+          <div className="overflow-x-auto flex-1">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-[10px]">
                 <tr>
-                  <td colSpan={4} className="text-center py-6 text-slate-400 font-medium">
-                    No existen cobros registrados recientemente.
-                  </td>
+                  <th className="px-4 py-3">Recibo</th>
+                  <th className="px-4 py-3">Concepto</th>
+                  <th className="px-4 py-3">Medio</th>
+                  <th className="px-4 py-3">Monto</th>
                 </tr>
-              ) : (
-                pagosRecientes.map((p, index) => (
-                  <tr key={p.pago_id || p.id || `pago-${index}`} className="hover:bg-slate-50">
-                    <td className="px-5 py-3 font-mono font-bold text-slate-700">{p.recibo_nro}</td>
-                    <td className="px-5 py-3 font-semibold text-slate-800">{p.concepto}</td>
-                    <td className="px-5 py-3 text-slate-600">{p.medio_pago}</td>
-                    <td className="px-5 py-3 font-bold text-emerald-600">Bs. {Number(p.monto_abonado)}</td>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {pagosRecientes.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" className="text-center py-6 text-slate-400 font-medium">No hay pagos recientes.</td>
                   </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+                ) : (
+                  pagosRecientes.slice(0, 5).map((p, index) => (
+                    <tr key={p.pago_id || p.id || `pago-${index}`}>
+                      <td className="px-4 py-3 font-bold">{p.recibo_nro}</td>
+                      <td className="px-4 py-3 truncate max-w-[150px]">{p.concepto}</td>
+                      <td className="px-4 py-3">{p.medio_pago}</td>
+                      <td className="px-4 py-3 font-bold text-emerald-600">
+                        Bs. {Number(p.monto_abonado || 0).toFixed(2)}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
+
+        {/* TABLA: Historial de Accesos RFID en Tiempo Real */}
+        <div className="rounded-2xl border border-slate-200/60 bg-white shadow-sm overflow-hidden flex flex-col">
+          <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between">
+            <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <Radio size={16} className="text-blue-600 animate-pulse" /> Accesos RFID Recientes
+            </h3>
+           
+          </div>
+          <div className="overflow-x-auto flex-1  max-h-[55vh] overflow-y-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-slate-50 text-slate-500 uppercase font-bold text-[10px] sticky top-0">
+                <tr>
+                  <th className="px-4 py-2.5">FOTO</th>
+                  <th className="px-4 py-2.5">ESTUDIANTE</th>
+                  <th className="px-4 py-2.5">C.I.</th>
+                  <th className="px-4 py-2.5">INGRESOS</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {registrosRfid.length === 0 ? (
+                  <tr>
+                    <td colSpan="4" className="text-center py-6 text-slate-400 font-medium">
+                      No hay registros de accesos RFID recientes.
+                    </td>
+                  </tr>
+                ) : (
+                  registrosRfid.map((reg, idx) => {
+                    // Extraemos los datos reales del objeto que retorna el backend (usuario o estudiante)
+                    const est = reg.usuario || reg.estudiante || reg || {};
+                    const fotoSrc = est.foto_base64 || reg.foto_base64;
+                    
+                    // Obtenemos correctamente el nombre completo real o armamos con nombre y apellido
+                    const nombreEst = est.nombre_completo || 
+                                      (est.nombre && est.apellido ? `${est.nombre} ${est.apellido}` : null) || 
+                                      est.nombres || 
+                                      'Sin Nombre';
+
+                    // Obtenemos el C.I. real del estudiante
+                    const ciEst = est.ci || reg.ci || 'N/A';
+
+                    const horaLectura = reg.created_at ? new Date(reg.created_at).toLocaleTimeString("es-BO", { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : (reg.hora || 'Reciente');
+
+                    return (
+                      <tr key={reg.id || idx} className="hover:bg-blue-50/20 transition-colors">
+                        <td className="px-4 py-2">
+                          {fotoSrc ? (
+                            <img
+                              src={fotoSrc}
+                              alt={nombreEst}
+                              className="h-8 w-8 rounded-lg object-cover border border-slate-200 shadow-sm"
+                            />
+                          ) : (
+                            <div className="h-8 w-8 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center font-bold text-[10px]">
+                              {nombreEst !== 'Sin Nombre' ? nombreEst.substring(0, 2).toUpperCase() : 'ES'}
+                            </div>
+                          )}
+                        </td>
+                        {/* MUESTRA EL NOMBRE COMPLETO REAL EN VEZ DE LA PALABRA ESTUDIANTE */}
+                        <td className="px-4 py-2 font-bold text-slate-800 capitalize truncate max-w-[150px]">
+                          {nombreEst}
+                        </td>
+                        {/* MUESTRA EL C.I. REAL */}
+                        <td className="px-4 py-2 font-mono text-slate-600 font-semibold">
+                          {ciEst}
+                        </td>
+                        <td className="px-4 py-2 font-mono text-[11px] text-orange-600 font-bold">
+                          {horaLectura}
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
       </div>
 
       {/* MODAL PRINCIPAL GESTION DE QR / CUENTAS */}

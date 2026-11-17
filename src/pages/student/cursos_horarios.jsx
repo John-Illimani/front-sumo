@@ -72,7 +72,7 @@ export const MisCursosYHorarios = () => {
       const [inscripcionesRes, todosCursosRes, postulantesRes] = await Promise.all([
         inscripcionesService.getAll().catch(() => []),
         cursosService.getAll().catch(() => []),
-        fetch(import.meta.env.VITE_API_URL + "/api/postulantes", { headers: authHeaders })
+        fetch("http://127.0.0.1:8000/api/postulantes", { headers: authHeaders })
           .then((res) => (res.ok ? res.json() : []))
           .catch(() => [])
       ]);

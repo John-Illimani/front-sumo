@@ -16,7 +16,6 @@ import {
   CheckCircle2,
   AlertCircle,
   Radio,
-  ExternalLink,
   CreditCard,
   GraduationCap,
   KeyRound,
@@ -26,16 +25,20 @@ import {
 import { blockchainBoletaService } from "../../services/admin/blockchainBoletaService";
 import { blockchainService } from "../../services/admin/blockchainService";
 
-import { GlobalWorkerOptions } from "pdfjs-dist";
-import pdfWorker from "pdfjs-dist/build/pdf.worker.min?url";
-
 if (typeof window !== "undefined") {
-  GlobalWorkerOptions.workerSrc = pdfWorker;
+  try {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
+      "pdfjs-dist/build/pdf.worker.mjs",
+      import.meta.url
+    ).toString();
+  } catch (e) {
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  }
 }
 
-// --- SERVICIOS AÑADIDOS SEGÚN REQUERIMIENTO ---
-
-const API_URL = import.meta.env.VITE_API_URL+'/api';
+// --- SERVICIOS API ---
+const API_URL = 'http://127.0.0.1:8000/api';
 
 const getAuthHeaders = () => {
   const token = localStorage.getItem('access_token');
@@ -54,9 +57,21 @@ export const studentService = {
     const data = await response.json();
     if (!response.ok) throw new Error(data.message || 'Error al obtener estudiantes');
     return data; 
+  },
+  registrarLecturaRfid: async (uuid) => {
+    const response = await fetch(`${API_URL}/rfid/registrar-lectura`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      body: JSON.stringify({ uuid })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(data.mensaje || 'El UUID ingresado no pertenece a ningún usuario activo.');
+    }
+    return data;
   }
 };
-// ----------------------------------------------
+// ---------------------
 
 async function generarHashInscripcionJS(datos, textoCertificadoParam = "") {
   const textoFinal = String(
@@ -152,7 +167,7 @@ const SoftFeedbackModal = ({ isOpen, onClose, resultadoData }) => {
         glowColor: "bg-emerald-500/20",
         btnBg: "bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 shadow-emerald-700/25",
         title: "Documento Íntegro y Válido",
-        subtitle: "Verificación Via Smart Contract Exitosa",
+        subtitle: "Verificación Smart Contract Exitosa",
       }
     : {
         badge: "bg-red-500/10 text-red-600 border-red-500/20",
@@ -202,7 +217,7 @@ const SoftFeedbackModal = ({ isOpen, onClose, resultadoData }) => {
           {isSuccess ? (
             <div className="mt-4 w-full text-left space-y-2.5 bg-gradient-to-br from-slate-50 to-orange-50/30 p-4 sm:p-5 rounded-2xl border border-orange-100/80 text-xs text-slate-700">
               <div className="flex justify-between border-b border-orange-100/60 pb-2">
-                <span className="font-semibold text-slate-500 flex items-center gap-1.5"><User size={14}/> Nombre Completo:</span>
+                <span className="font-semibold text-slate-500 flex items-center gap-1.5 "><User size={14}/> Nombre Completo:</span>
                 <span className="font-bold text-slate-900 uppercase">{registro.nombres || registro.nombreCompleto || registro.nombre_completo || "N/A"}</span>
               </div>
               <div className="flex justify-between border-b border-orange-100/60 pb-2">
@@ -225,7 +240,6 @@ const SoftFeedbackModal = ({ isOpen, onClose, resultadoData }) => {
               <div className="pt-2">
                 <div className="flex items-center justify-between mb-1">
                   <span className="font-bold text-slate-800 text-[11px]">Hash Transacción / Blockchain:</span>
-                 
                 </div>
                 <span className="block font-mono text-[10px] font-medium text-slate-800 break-all bg-white p-2 rounded-xl border border-slate-200/80 shadow-inner">
                   {resultadoData.hashCalculado || "0x..."}
@@ -258,7 +272,7 @@ const SoftFeedbackModal = ({ isOpen, onClose, resultadoData }) => {
   return createPortal(modalContent, document.body);
 };
 
-// NUEVO MODAL: Exclusivo para verificación de UUID (Lectura RFID)
+// MODAL RFID: Muestra la foto real del estudiante desde PostgreSQL y sus datos
 const RfidFeedbackModal = ({ isOpen, onClose, resultadoData }) => {
   const [render, setRender] = useState(isOpen);
   const [visible, setVisible] = useState(false);
@@ -274,6 +288,20 @@ const RfidFeedbackModal = ({ isOpen, onClose, resultadoData }) => {
       return () => clearTimeout(timer);
     }
   }, [isOpen]);
+
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === "Escape" && isOpen) onClose();
+    };
+    if (isOpen) {
+      document.body.style.overflow = "hidden";
+      window.addEventListener("keydown", handleKeyDown);
+    }
+    return () => {
+      document.body.style.overflow = "unset";
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [isOpen, onClose]);
 
   if (!render || !resultadoData) return null;
 
@@ -322,10 +350,19 @@ const RfidFeedbackModal = ({ isOpen, onClose, resultadoData }) => {
         </button>
 
         <div className="relative flex flex-col items-center text-center">
+          {/* Fotografía del Estudiante o Ícono por Defecto */}
           <div className="relative mb-4">
-            <div className={`flex h-20 w-20 items-center justify-center rounded-3xl ${theme.iconBg} text-white shadow-xl ring-4 ring-white`}>
-              {isSuccess ? <IdCard size={40} strokeWidth={2.2} /> : <AlertCircle size={40} strokeWidth={2.2} />}
-            </div>
+            {isSuccess && resultadoData.fotoBase64 ? (
+              <img
+                src={resultadoData.fotoBase64}
+                alt={resultadoData.nombreCompleto}
+                className="h-24 w-24 rounded-3xl object-cover shadow-xl ring-4 ring-blue-500/30 border-2 border-white"
+              />
+            ) : (
+              <div className={`flex h-20 w-20 items-center justify-center rounded-3xl ${theme.iconBg} text-white shadow-xl ring-4 ring-white`}>
+                {isSuccess ? <IdCard size={40} strokeWidth={2.2} /> : <AlertCircle size={40} strokeWidth={2.2} />}
+              </div>
+            )}
           </div>
 
           <span className={`inline-flex items-center gap-1.5 rounded-full border px-3.5 py-1 text-[11px] font-black uppercase tracking-widest ${theme.badge}`}>
@@ -378,7 +415,6 @@ const RfidFeedbackModal = ({ isOpen, onClose, resultadoData }) => {
   return createPortal(modalContent, document.body);
 };
 
-
 export const VerificarBoletaSecretaria = () => {
   const [metodo, setMetodo] = useState("qr_camara");
   const [inputValue, setInputValue] = useState("");
@@ -389,7 +425,6 @@ export const VerificarBoletaSecretaria = () => {
   const [modalOpen, setModalOpen] = useState(false);
   const [modalData, setModalData] = useState(null);
   
-  // Nuevos estados para el Modal RFID
   const [rfidModalOpen, setRfidModalOpen] = useState(false);
   const [rfidModalData, setRfidModalData] = useState(null);
   
@@ -426,7 +461,6 @@ export const VerificarBoletaSecretaria = () => {
   // Listener global optimizado para lector RFID (simula teclado)
   useEffect(() => {
     const handleKeyDown = (e) => {
-      // Evitar conflictos si el usuario está escribiendo en algún input activo
       if (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA") {
         return;
       }
@@ -438,7 +472,6 @@ export const VerificarBoletaSecretaria = () => {
           setRfidInput(codeScanned);
           notify("Etiqueta detectada", "ok");
           
-          // Lógica condicional: si estamos en modo rfid buscar UUID en base de datos.
           if (metodoActualRef.current === "rfid") {
             procesarRfidUuid(codeScanned);
           } else {
@@ -591,7 +624,7 @@ export const VerificarBoletaSecretaria = () => {
     }
   };
 
-  // NUEVA FUNCIÓN: Búsqueda específica por UUID de la base de datos mostrada en image_362ac9.png
+  // Registra la lectura en PostgreSQL y obtiene los datos + foto real del usuario
   const procesarRfidUuid = async (uuidScanned) => {
     let targetUuid = (uuidScanned || rfidInput).trim();
     if (!targetUuid) {
@@ -600,31 +633,23 @@ export const VerificarBoletaSecretaria = () => {
     }
     setIsScanning(true);
     try {
-      const usuarios = await studentService.getAll();
-      
-      // Busca coincidencias usando la estructura definida (nombre, apellido, ci, uuid)
-      const usuarioEncontrado = usuarios.find(u => String(u.uuid) === String(targetUuid));
+      const respuesta = await studentService.registrarLecturaRfid(targetUuid);
+      const usuarioEncontrado = respuesta.usuario;
 
-      if (usuarioEncontrado) {
-        setRfidModalData({
-          encontrado: true,
-          nombreCompleto: `${usuarioEncontrado.nombre} ${usuarioEncontrado.apellido}`,
-          ci: usuarioEncontrado.ci,
-          uuid: targetUuid
-        });
-        setRfidModalOpen(true);
-      } else {
-        setRfidModalData({
-          encontrado: false,
-          error: "El UUID ingresado no pertenece a ningún usuario activo.",
-          uuid: targetUuid
-        });
-        setRfidModalOpen(true);
-      }
+      setRfidModalData({
+        encontrado: true,
+        nombreCompleto: usuarioEncontrado.nombre_completo,
+        ci: usuarioEncontrado.ci,
+        uuid: usuarioEncontrado.uuid,
+        fotoBase64: usuarioEncontrado.foto_base64
+      });
+      setRfidModalOpen(true);
+      setRfidInput("");
+      notify("Ingreso RFID registrado en el sistema", "ok");
     } catch (error) {
       setRfidModalData({
         encontrado: false,
-        error: error.message || "Error de conexión con el servicio de estudiantes.",
+        error: error.message || "El UUID ingresado no pertenece a ningún usuario activo.",
         uuid: targetUuid
       });
       setRfidModalOpen(true);
@@ -812,7 +837,6 @@ export const VerificarBoletaSecretaria = () => {
               </p>
             </div>
 
-            {/* SECCIÓN DE BÚSQUEDA MANUAL AÑADIDA */}
             <div className="flex w-full max-w-md items-center gap-2 mt-2">
               <div className="relative flex-1">
                 <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">
@@ -843,7 +867,7 @@ export const VerificarBoletaSecretaria = () => {
 
             {isScanning && (
               <div className="text-xs font-bold text-blue-600 flex items-center gap-2">
-                 <Loader2 size={14} className="animate-spin" /> Buscando coincidencia...
+                <Loader2 size={14} className="animate-spin" /> Buscando coincidencia...
               </div>
             )}
           </div>
@@ -857,7 +881,7 @@ export const VerificarBoletaSecretaria = () => {
         resultadoData={modalData}
       />
       
-      {/* NUEVO MODAL PARA UUID (RFID) */}
+      {/* MODAL PARA UUID (RFID) CON FOTO */}
       <RfidFeedbackModal
         isOpen={rfidModalOpen}
         onClose={() => setRfidModalOpen(false)}

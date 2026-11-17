@@ -58,7 +58,7 @@ export const BlockchainEmisionModal = ({
         iconBg: "bg-gradient-to-br from-emerald-400 to-emerald-600",
         glowColor: "bg-emerald-500/20",
         btnBg: "bg-gradient-to-r from-emerald-600 to-teal-700 hover:from-emerald-500 hover:to-teal-600 shadow-emerald-700/25",
-        title: "Emisión Exitosa en Blockchain",
+        title: "Emisión Exitosa Mediante Smart Contract en la Blockchain",
         subtitle: "Registro inmutable verificado",
       };
 
